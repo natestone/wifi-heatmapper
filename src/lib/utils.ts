@@ -31,10 +31,13 @@ export const percentageToRssi = (percentage: number): number => {
 
 /**
  * toMbps - convert a number to a "Mbps" value - two significant digits
- * @param the value (in bits/second) to convert
- * @returns String in format "123.45" (no units)
+ * @param the value (in bits/second) to convert, or null if no data
+ * @returns String in format "123.45" (no units), or "--" if no data
  */
-export const toMbps = (value: number): string => {
+export const toMbps = (value: number | null): string => {
+  if (value === null) {
+    return "--";
+  }
   return `${(value / 1000000).toFixed(2)}`;
 };
 
@@ -52,11 +55,14 @@ export const toMbps = (value: number): string => {
  * @returns
  */
 export const metricFormatter = (
-  value: number,
+  value: number | null,
   metric: MeasurementTestType,
   testType?: keyof IperfTestProperty,
   showSignalStrengthAsPercentage?: boolean,
 ): string => {
+  if (value === null) {
+    return "--";
+  }
   if (metric === testTypes.signalStrength) {
     return showSignalStrengthAsPercentage
       ? `${Math.round(value)}%`
@@ -149,7 +155,7 @@ export const isValidMacAddress = (macAddress: string): boolean => {
  */
 export function extractIperfResults(
   result: {
-    end: {
+    end?: {
       sum_received?: { bits_per_second: number };
       sum_sent?: { retransmits?: number };
       sum?: {
@@ -168,10 +174,23 @@ export function extractIperfResults(
         };
       }>;
     };
+    error?: string;
     version?: string;
   },
   isUdp: boolean,
 ): IperfTestProperty {
+  // Handle missing or error results
+  if (!result.end) {
+    return {
+      bitsPerSecond: null,
+      retransmits: null,
+      jitterMs: null,
+      lostPackets: null,
+      packetsReceived: null,
+      signalStrength: 0,
+    };
+  }
+
   const end = result.end;
 
   // Check if we're dealing with newer iPerf (Mac - v3.17+) or older iPerf (Ubuntu - v3.9)
@@ -192,21 +211,22 @@ export function extractIperfResults(
   // For UDP tests with newer iPerf (Mac), we want to use sum.bits_per_second
   // For TCP tests with newer iPerf, we want to use sum_received.bits_per_second
   // For all tests with older iPerf (Ubuntu), we want to use sum.bits_per_second
-  const bitsPerSecond = isNewVersion
-    ? isUdp
-      ? end.sum?.bits_per_second || 0
-      : end.sum_received!.bits_per_second
-    : end.sum?.bits_per_second || 0;
+  let bitsPerSecond: number | null = null;
+  if (isNewVersion) {
+    bitsPerSecond = isUdp
+      ? (end.sum?.bits_per_second ?? null)
+      : (end.sum_received?.bits_per_second ?? null);
+  } else {
+    bitsPerSecond = end.sum?.bits_per_second ?? null;
+  }
 
-  if (!bitsPerSecond) {
-    throw new Error(
-      "No bits per second found in iperf results. This is fatal.",
-    );
+  if (bitsPerSecond === 0) {
+    bitsPerSecond = null;
   }
 
   const retransmits = isNewVersion
-    ? end.sum_sent?.retransmits || 0
-    : end.sum?.retransmits || 0;
+    ? (end.sum_sent?.retransmits ?? null)
+    : (end.sum?.retransmits ?? null);
 
   return {
     bitsPerSecond,
@@ -214,9 +234,9 @@ export function extractIperfResults(
 
     // UDP metrics - only relevant for UDP tests
     // These fields will be null for TCP tests
-    jitterMs: isUdp ? end.sum?.jitter_ms || null : null,
-    lostPackets: isUdp ? end.sum?.lost_packets || null : null,
-    packetsReceived: isUdp ? end.sum?.packets || null : null,
+    jitterMs: isUdp ? (end.sum?.jitter_ms ?? null) : null,
+    lostPackets: isUdp ? (end.sum?.lost_packets ?? null) : null,
+    packetsReceived: isUdp ? (end.sum?.packets ?? null) : null,
     signalStrength: 0,
   };
 }
@@ -279,11 +299,11 @@ export function channelToBand(channel: number): number {
 }
 
 export const emptyIperfTestProperty: IperfTestProperty = {
-  bitsPerSecond: 0,
-  retransmits: 0,
-  jitterMs: 0,
-  lostPackets: 0,
-  packetsReceived: 0,
+  bitsPerSecond: null,
+  retransmits: null,
+  jitterMs: null,
+  lostPackets: null,
+  packetsReceived: null,
   signalStrength: 0,
 };
 

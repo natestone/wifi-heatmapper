@@ -24,7 +24,7 @@ describe("extractIperfResults", () => {
       expect(result.packetsReceived).toBe(82494);
 
       // These values are specific to UDP tests - retransmits don't apply to UDP
-      expect(result.retransmits).toBe(0);
+      expect(result.retransmits).toBeNull();
     });
 
     it("should extract data correctly from older iPerf (Ubuntu) UDP results", () => {
@@ -37,7 +37,7 @@ describe("extractIperfResults", () => {
       expect(result.packetsReceived).toBe(98179);
 
       // These values are specific to UDP tests - retransmits don't apply to UDP
-      expect(result.retransmits).toBe(0);
+      expect(result.retransmits).toBeNull();
     });
   });
 
@@ -92,15 +92,23 @@ describe("extractIperfResults", () => {
   });
 
   describe("Error handling", () => {
-    it("should throw an error if bits_per_second is missing", () => {
+    it("should return null bitsPerSecond if bits_per_second is missing", () => {
       // Create a copy with missing bits_per_second
       const badData = JSON.parse(JSON.stringify(iperfUdpMacResult));
       badData.end.sum_received.bits_per_second = undefined;
       badData.end.sum.bits_per_second = undefined;
 
-      expect(() => extractIperfResults(badData, true)).toThrow(
-        "No bits per second found in iperf results",
-      );
+      const result = extractIperfResults(badData, true);
+      expect(result.bitsPerSecond).toBeNull();
+    });
+
+    it("should return null values if end data is missing", () => {
+      const badData = { error: "test error" };
+
+      const result = extractIperfResults(badData, true);
+      expect(result.bitsPerSecond).toBeNull();
+      expect(result.retransmits).toBeNull();
+      expect(result.jitterMs).toBeNull();
     });
   });
 });

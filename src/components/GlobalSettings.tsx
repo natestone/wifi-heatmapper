@@ -22,6 +22,9 @@ export const getDefaults = (floorPlan: string): HeatmapSettings => {
     floorplanImageName: floorPlan,
     floorplanImagePath: join("/media", floorPlan),
     iperfServerAdrs: "localhost",
+    iperfServerHistory: [],
+    iperfTcpEnabled: false,
+    iperfUdpEnabled: false,
     apMapping: [],
     testDuration: 1,
     sudoerPassword: "",
@@ -47,11 +50,30 @@ export const getDefaults = (floorPlan: string): HeatmapSettings => {
   };
 };
 
+/**
+ * Check if iperf server settings are valid
+ * Returns error message if invalid, empty string if valid
+ */
+export function validateIperfSettings(settings: HeatmapSettings): string {
+  const bandwidthTestsEnabled =
+    settings.iperfTcpEnabled || settings.iperfUdpEnabled;
+  if (bandwidthTestsEnabled) {
+    if (!settings.iperfServerAdrs || settings.iperfServerAdrs === "localhost") {
+      return "Please enter an iperf3 server address for bandwidth tests";
+    }
+  }
+  return "";
+}
+
 interface SettingsContextType {
   settings: HeatmapSettings;
   updateSettings: (newSettings: Partial<HeatmapSettings>) => void;
   surveyPointActions: SurveyPointActions;
   readNewSettingsFromFile: (theFile: string) => void;
+  settingsMenuOpen: boolean;
+  setSettingsMenuOpen: (open: boolean) => void;
+  sudoPasswordError: boolean;
+  setSudoPasswordError: (error: boolean) => void;
 }
 
 // Create the context
@@ -71,6 +93,8 @@ export function useSettings() {
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<HeatmapSettings>(getDefaults(""));
   const [floorplanImage, setFloorplanImage] = useState<string>("");
+  const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
+  const [sudoPasswordError, setSudoPasswordError] = useState(false);
   const defaultFloorPlan = "EmptyFloorPlan.png";
 
   async function loadSettings(floorplanImage: string) {
@@ -79,6 +103,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     if (newHeatmapSettings) {
       // we read from a file, but that won't contain the password
       newHeatmapSettings.sudoerPassword = "";
+      // Merge with defaults to ensure new fields have proper values
+      const floorPlanUsed =
+        floorplanImage == "" ? defaultFloorPlan : floorplanImage;
+      const defaults = getDefaults(floorPlanUsed);
+      newHeatmapSettings = { ...defaults, ...newHeatmapSettings };
       setSettings(newHeatmapSettings);
     } else {
       // use the provided floor plan image or the default
@@ -140,6 +169,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         updateSettings,
         surveyPointActions,
         readNewSettingsFromFile,
+        settingsMenuOpen,
+        setSettingsMenuOpen,
+        sudoPasswordError,
+        setSudoPasswordError,
       }}
     >
       {children}

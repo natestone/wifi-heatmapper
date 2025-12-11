@@ -47,6 +47,9 @@ const initialStates = {
   strength: "-",
   tcp: "-/- Mbps",
   udp: "-/- Mbps",
+  tcpEnabled: true,
+  udpEnabled: true,
+  progress: 0,
 };
 
 // The measurement process updates these variables
@@ -57,6 +60,9 @@ let displayStates = {
   strength: "-",
   tcp: "-/- Mbps",
   udp: "-/- Mbps",
+  tcpEnabled: true,
+  udpEnabled: true,
+  progress: 0,
 };
 
 /**
@@ -68,10 +74,23 @@ function getUpdatedMessage(): SSEMessageType {
   if (strength != "-") {
     strength += "%";
   }
+
+  // Build status string based on which tests are enabled
+  const statusLines = [`Signal strength: ${strength}`];
+  if (displayStates.tcpEnabled) {
+    statusLines.push(`TCP: ${displayStates.tcp}`);
+  }
+  if (displayStates.udpEnabled) {
+    statusLines.push(`UDP: ${displayStates.udp}`);
+  }
+
   return {
     type: displayStates.type,
     header: displayStates.header,
-    status: `Signal strength: ${strength}\nTCP: ${displayStates.tcp}\nUDP: ${displayStates.udp}`,
+    status: statusLines.join("\n"),
+    tcpEnabled: displayStates.tcpEnabled,
+    udpEnabled: displayStates.udpEnabled,
+    progress: displayStates.progress,
   };
 }
 
@@ -127,7 +146,12 @@ export async function runSurveyTests(
 
     // set the initial states, then send an event to the client
     const startTime = Date.now();
-    displayStates = { ...displayStates, ...initialStates };
+    displayStates = {
+      ...displayStates,
+      ...initialStates,
+      tcpEnabled: performIperfTest && settings.iperfTcpEnabled,
+      udpEnabled: performIperfTest && settings.iperfUdpEnabled,
+    };
     sendSSEMessage(getUpdatedMessage()); // immediately send initial values
     displayStates.header = "Measurement in progress...";
 
@@ -167,22 +191,45 @@ export async function runSurveyTests(
         checkForCancel();
         sendSSEMessage(getUpdatedMessage());
 
+        // Calculate progress offsets based on which tests are enabled
+        const tcpEnabled = performIperfTest && settings.iperfTcpEnabled;
+        const udpEnabled = performIperfTest && settings.iperfUdpEnabled;
+        const totalTests = (tcpEnabled ? 2 : 0) + (udpEnabled ? 2 : 0); // 2 tests per type (up/down)
+        const progressPerTest = totalTests > 0 ? 100 / totalTests : 0;
+        let completedTests = 0;
+
+        const createProgressCallback = () => (percent: number) => {
+          const baseProgress = completedTests * progressPerTest;
+          const testProgress = (percent / 100) * progressPerTest;
+          displayStates.progress = Math.round(baseProgress + testProgress);
+          sendSSEMessage(getUpdatedMessage());
+        };
+
         // Run the TCP tests
-        if (performIperfTest) {
+        if (tcpEnabled) {
+          displayStates.tcp = "Testing...";
           newIperfData.tcpDownload = await runSingleTest(
             server,
             duration,
             "Down",
             "TCP",
+            createProgressCallback(),
           );
+          completedTests++;
+          displayStates.tcp = `${toMbps(newIperfData.tcpDownload.bitsPerSecond)} / ... Mbps`;
+          sendSSEMessage(getUpdatedMessage());
+
           newIperfData.tcpUpload = await runSingleTest(
             server,
             duration,
             "Up",
             "TCP",
+            createProgressCallback(),
           );
+          completedTests++;
           displayStates.tcp = `${toMbps(newIperfData.tcpDownload.bitsPerSecond)} / ${toMbps(newIperfData.tcpUpload.bitsPerSecond)} Mbps`;
-        } else {
+        } else if (displayStates.tcpEnabled) {
+          // Only show status if TCP was supposed to be enabled but iperf server unavailable
           await delay(500);
           displayStates.tcp = noIperfTestReason;
         }
@@ -196,24 +243,34 @@ export async function runSurveyTests(
         sendSSEMessage(getUpdatedMessage());
 
         // Run the UDP tests
-        if (performIperfTest) {
+        if (udpEnabled) {
+          displayStates.udp = "Testing...";
           newIperfData.udpDownload = await runSingleTest(
             server,
             duration,
             "Down",
             "UDP",
+            createProgressCallback(),
           );
+          completedTests++;
+          displayStates.udp = `${toMbps(newIperfData.udpDownload.bitsPerSecond)} / ... Mbps`;
+          sendSSEMessage(getUpdatedMessage());
+
           newIperfData.udpUpload = await runSingleTest(
             server,
             duration,
             "Up",
             "UDP",
+            createProgressCallback(),
           );
+          completedTests++;
           displayStates.udp = `${toMbps(newIperfData.udpDownload.bitsPerSecond)} / ${toMbps(newIperfData.udpUpload.bitsPerSecond)} Mbps`;
-        } else {
+        } else if (displayStates.udpEnabled) {
+          // Only show status if UDP was supposed to be enabled but iperf server unavailable
           await delay(500);
           displayStates.udp = noIperfTestReason;
         }
+        displayStates.progress = 100;
         checkForCancel();
         sendSSEMessage(getUpdatedMessage());
 
@@ -275,6 +332,7 @@ async function runSingleTest(
   duration: number,
   testDir: TestDirection,
   testType: TestType,
+  onProgress?: (percent: number) => void,
 ): Promise<IperfTestProperty> {
   const logger = getLogger("runSingleTest");
 
@@ -289,17 +347,52 @@ async function runSingleTest(
   const command = `iperf3 -c ${server} ${
     port ? `-p ${port}` : ""
   } -t ${duration} ${isDownload ? "-R" : ""} ${isUdp ? "-u -b 0" : ""} -J`;
-  const { stdout } = await execAsync(command);
-  const result = JSON.parse(stdout);
-  logger.trace("Iperf JSON-parsed result:", result);
-  const extracted = extractIperfData(result, isUdp);
-  logger.trace("Iperf extracted results:", extracted);
-  return extracted;
+
+  // Start progress simulation while iperf3 runs
+  const testStartTime = Date.now();
+  const testDurationMs = duration * 1000;
+  let progressInterval: ReturnType<typeof setInterval> | null = null;
+
+  if (onProgress) {
+    progressInterval = setInterval(() => {
+      const elapsed = Date.now() - testStartTime;
+      const percent = Math.min(
+        Math.round((elapsed / testDurationMs) * 100),
+        99,
+      );
+      onProgress(percent);
+    }, 200); // Update every 200ms
+  }
+
+  try {
+    const { stdout } = await execAsync(command);
+    const result = JSON.parse(stdout);
+    logger.trace("Iperf JSON-parsed result:", result);
+    const extracted = extractIperfData(result, isUdp);
+    logger.trace("Iperf extracted results:", extracted);
+    return extracted;
+  } catch (error) {
+    logger.error(`iperf3 test failed: ${error}`);
+    // Return null results instead of throwing
+    return {
+      bitsPerSecond: null,
+      retransmits: null,
+      jitterMs: null,
+      lostPackets: null,
+      packetsReceived: null,
+      signalStrength: 0,
+    };
+  } finally {
+    if (progressInterval) {
+      clearInterval(progressInterval);
+      if (onProgress) onProgress(100);
+    }
+  }
 }
 
-export async function extractIperfData(
+function extractIperfData(
   result: {
-    end: {
+    end?: {
       sum_received?: { bits_per_second: number };
       sum_sent?: { retransmits?: number };
       sum?: {
@@ -318,10 +411,26 @@ export async function extractIperfData(
         };
       }>;
     };
+    error?: string;
     version?: string;
   },
   isUdp: boolean,
-): Promise<IperfTestProperty> {
+): IperfTestProperty {
+  // Handle missing or error results
+  if (!result.end) {
+    logger.warn(
+      `No end data in iperf results: ${result.error || "unknown error"}`,
+    );
+    return {
+      bitsPerSecond: null,
+      retransmits: null,
+      jitterMs: null,
+      lostPackets: null,
+      packetsReceived: null,
+      signalStrength: 0,
+    };
+  }
+
   const end = result.end;
 
   // Check if we're dealing with newer iPerf (Mac - v3.17+) or older iPerf (Ubuntu - v3.9)
@@ -342,21 +451,23 @@ export async function extractIperfData(
   // For UDP tests with newer iPerf (Mac), we want to use sum.bits_per_second
   // For TCP tests with newer iPerf, we want to use sum_received.bits_per_second
   // For all tests with older iPerf (Ubuntu), we want to use sum.bits_per_second
-  const bitsPerSecond = isNewVersion
-    ? isUdp
-      ? end.sum?.bits_per_second || 0
-      : end.sum_received!.bits_per_second
-    : end.sum?.bits_per_second || 0;
+  let bitsPerSecond: number | null = null;
+  if (isNewVersion) {
+    bitsPerSecond = isUdp
+      ? (end.sum?.bits_per_second ?? null)
+      : (end.sum_received?.bits_per_second ?? null);
+  } else {
+    bitsPerSecond = end.sum?.bits_per_second ?? null;
+  }
 
-  if (!bitsPerSecond) {
-    throw new Error(
-      "No bits per second found in iperf results. This is fatal.",
-    );
+  if (bitsPerSecond === null || bitsPerSecond === 0) {
+    logger.warn("No bits per second found in iperf results, reporting as --");
+    bitsPerSecond = null;
   }
 
   const retransmits = isNewVersion
-    ? end.sum_sent?.retransmits || 0
-    : end.sum?.retransmits || 0;
+    ? (end.sum_sent?.retransmits ?? null)
+    : (end.sum?.retransmits ?? null);
 
   return {
     bitsPerSecond,
@@ -364,9 +475,9 @@ export async function extractIperfData(
 
     // UDP metrics - only relevant for UDP tests
     // These fields will be null for TCP tests
-    jitterMs: isUdp ? end.sum?.jitter_ms || null : null,
-    lostPackets: isUdp ? end.sum?.lost_packets || null : null,
-    packetsReceived: isUdp ? end.sum?.packets || null : null,
+    jitterMs: isUdp ? (end.sum?.jitter_ms ?? null) : null,
+    lostPackets: isUdp ? (end.sum?.lost_packets ?? null) : null,
+    packetsReceived: isUdp ? (end.sum?.packets ?? null) : null,
     signalStrength: 0,
   };
 }

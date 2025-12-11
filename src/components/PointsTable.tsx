@@ -9,7 +9,7 @@ import {
   flexRender,
   VisibilityState,
 } from "@tanstack/react-table";
-import { ChevronDown, ChevronUp, ChevronsUpDown } from "lucide-react";
+import { ChevronDown, ChevronUp, ChevronsUpDown, Download } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -46,10 +46,10 @@ type FlattenedSurveyPoint = {
   phyMode: string;
   channelWidth: number;
   band: string;
-  tcpDownloadMbps: number;
-  tcpUploadMbps: number;
-  udpDownloadMbps: number;
-  udpUploadMbps: number;
+  tcpDownloadMbps: number | null;
+  tcpUploadMbps: number | null;
+  udpDownloadMbps: number | null;
+  udpUploadMbps: number | null;
   timestamp: string;
   isEnabled: boolean;
   origPoint: SurveyPoint; // to remember the original point
@@ -167,18 +167,22 @@ const SurveyPointsTable: React.FC<SurveyPointsTableProps> = ({
       {
         accessorKey: "tcpDownloadMbps",
         header: "TCP Down [Mbps]",
+        cell: ({ row }) => row.original.tcpDownloadMbps ?? "--",
       },
       {
         accessorKey: "tcpUploadMbps",
         header: "TCP Up [Mbps]",
+        cell: ({ row }) => row.original.tcpUploadMbps ?? "--",
       },
       {
         accessorKey: "udpDownloadMbps",
         header: "UDP Down [Mbps]",
+        cell: ({ row }) => row.original.udpDownloadMbps ?? "--",
       },
       {
         accessorKey: "udpUploadMbps",
         header: "UDP Up [Mbps]",
+        cell: ({ row }) => row.original.udpUploadMbps ?? "--",
       },
       {
         accessorKey: "timestamp",
@@ -217,7 +221,10 @@ const SurveyPointsTable: React.FC<SurveyPointsTableProps> = ({
     [myUpdate],
   );
 
-  const convertToMbps = (bitsPerSecond: number) => {
+  const convertToMbps = (bitsPerSecond: number | null): number | null => {
+    if (bitsPerSecond === null) {
+      return null;
+    }
     return Math.round((bitsPerSecond / 1000000) * 100) / 100;
   };
 
@@ -292,6 +299,85 @@ const SurveyPointsTable: React.FC<SurveyPointsTableProps> = ({
       myUpdate(id, { isEnabled: !allHidden });
     });
   }, [rowSelection, flattenedData, myUpdate]);
+
+  const downloadCSV = useCallback(() => {
+    // CSV headers
+    const headers = [
+      "ID",
+      "X",
+      "Y",
+      "SSID",
+      "BSSID",
+      "RSSI (dBm)",
+      "Signal Quality (%)",
+      "Channel",
+      "Band",
+      "Channel Width",
+      "TX Rate",
+      "PHY Mode",
+      "Security",
+      "TCP Download (Mbps)",
+      "TCP Upload (Mbps)",
+      "UDP Download (Mbps)",
+      "UDP Upload (Mbps)",
+      "Enabled",
+      "Timestamp",
+    ];
+
+    // Convert data to CSV rows
+    const rows = flattenedData.map((point) => [
+      point.id,
+      point.x,
+      point.y,
+      point.ssid,
+      point.origPoint.wifiData.bssid, // Use original BSSID without AP mapping
+      point.rssi,
+      point.origPoint.wifiData.signalStrength ||
+        rssiToPercentage(point.origPoint.wifiData.rssi),
+      point.channel,
+      point.origPoint.wifiData.band,
+      point.channelWidth,
+      point.txRate,
+      point.phyMode,
+      point.security,
+      point.tcpDownloadMbps ?? "",
+      point.tcpUploadMbps ?? "",
+      point.udpDownloadMbps ?? "",
+      point.udpUploadMbps ?? "",
+      point.isEnabled ? "Yes" : "No",
+      new Date(point.origPoint.timestamp).toISOString(),
+    ]);
+
+    // Escape CSV values (handle commas, quotes, newlines)
+    const escapeCSV = (value: string | number | null): string => {
+      if (value === null || value === undefined) return "";
+      const str = String(value);
+      if (str.includes(",") || str.includes('"') || str.includes("\n")) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
+    // Build CSV content
+    const csvContent = [
+      headers.map(escapeCSV).join(","),
+      ...rows.map((row) => row.map(escapeCSV).join(",")),
+    ].join("\n");
+
+    // Create and trigger download
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute(
+      "download",
+      `survey-points-${new Date().toISOString().split("T")[0]}.csv`,
+    );
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, [flattenedData]);
 
   return (
     <div className="space-y-4">
@@ -373,6 +459,15 @@ const SurveyPointsTable: React.FC<SurveyPointsTableProps> = ({
             disabled={Object.keys(rowSelection).length === 0}
           >
             Toggle Disable Selected
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={downloadCSV}
+            disabled={flattenedData.length === 0}
+          >
+            <Download className="mr-2 h-4 w-4" />
+            Download CSV
           </Button>
         </div>
       </div>

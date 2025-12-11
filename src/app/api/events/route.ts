@@ -17,6 +17,9 @@ export type SSEMessageType = {
   type: string;
   header: string;
   status: string;
+  tcpEnabled?: boolean;
+  udpEnabled?: boolean;
+  progress?: number; // 0-100 percentage of current test phase
 };
 
 export async function GET(req: NextRequest) {

@@ -5,16 +5,23 @@ import { Button } from "@/components/ui/button"; // shadcn or your own button co
 type PasswordInputProps = {
   value: string;
   onChange: (value: string) => void;
+  hasError?: boolean;
 };
 
-export function PasswordInput({ value, onChange }: PasswordInputProps) {
+export function PasswordInput({
+  value,
+  onChange,
+  hasError = false,
+}: PasswordInputProps) {
   const [visible, setVisible] = useState(false);
 
   return (
     <div className="relative w-full">
       <input
         type={visible ? "text" : "password"}
-        className="w-full p-2 pr-10 border rounded bg-white-800 text-black"
+        className={`w-full p-2 pr-10 border rounded bg-white-800 text-black ${
+          hasError ? "border-red-500 border-2 bg-red-50" : ""
+        }`}
         placeholder="Enter password"
         value={value}
         onChange={(e) => onChange(e.target.value)}

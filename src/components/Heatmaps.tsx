@@ -129,8 +129,8 @@ export function Heatmaps() {
         case "udpDownload":
         case "udpUpload":
           return testType
-            ? point.iperfData[metric][testType] || 0
-            : point.iperfData[metric].bitsPerSecond;
+            ? (point.iperfData[metric][testType] ?? 0)
+            : (point.iperfData[metric].bitsPerSecond ?? 0);
         default:
           return 0;
       }

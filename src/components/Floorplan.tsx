@@ -14,11 +14,18 @@ import { Toaster } from "@/components/ui/toaster";
 import NewToast from "@/components/NewToast";
 import PopupDetails from "@/components/PopupDetails";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Info, X } from "lucide-react";
 import { getLogger } from "../lib/logger";
 const logger = getLogger("Floorplan");
 
 export default function ClickableFloorplan(): ReactNode {
-  const { settings, updateSettings, surveyPointActions } = useSettings();
+  const {
+    settings,
+    updateSettings,
+    surveyPointActions,
+    setSettingsMenuOpen,
+    setSudoPasswordError,
+  } = useSettings();
 
   const [imageLoaded, setImageLoaded] = useState(false);
   const imageRef = useRef<HTMLImageElement | null>(null);
@@ -31,6 +38,7 @@ export default function ClickableFloorplan(): ReactNode {
   const [alertMessage, setAlertMessage] = useState("");
   const [isToastOpen, setIsToastOpen] = useState(false);
   const [surveyClick, setSurveyClick] = useState({ x: 0, y: 0 });
+  const [showInfo, setShowInfo] = useState(false);
 
   /**
    * Adding test points
@@ -55,9 +63,13 @@ export default function ClickableFloorplan(): ReactNode {
 
   /**
    * Load the image (and the canvas) when the component is mounted
+   * or when the floorplanImagePath changes
    */
   useEffect(() => {
-    if (settings.floorplanImagePath != "") {
+    if (
+      settings.floorplanImagePath != "" &&
+      settings.floorplanImagePath != "/media"
+    ) {
       const img = new Image();
       img.src = settings.floorplanImagePath; // load the image from the path
 
@@ -68,10 +80,10 @@ export default function ClickableFloorplan(): ReactNode {
         imageRef.current = img;
       };
       img.onerror = () => {
-        console.log(`image error`);
+        console.log(`image error: ${settings.floorplanImagePath}`);
       };
     }
-  }, []);
+  }, [settings.floorplanImagePath]);
 
   /**
    * addTestPoint() - add a test point
@@ -137,6 +149,8 @@ export default function ClickableFloorplan(): ReactNode {
     const partialSettings = {
       settings: {
         iperfServerAdrs: settings.iperfServerAdrs,
+        iperfTcpEnabled: settings.iperfTcpEnabled,
+        iperfUdpEnabled: settings.iperfUdpEnabled,
         testDuration: settings.testDuration,
         sudoerPassword: settings.sudoerPassword,
         // ignoredSSIDs: settings.ignoredSSIDs,
@@ -420,6 +434,13 @@ export default function ClickableFloorplan(): ReactNode {
         y: clickedPoint.y * scale,
       });
     } else {
+      // Check if sudo password is set before starting measurement
+      if (!settings.sudoerPassword) {
+        setSudoPasswordError(true);
+        setSettingsMenuOpen(true);
+        return;
+      }
+
       // otherwise, start a measurement
       drawEmptyPoint({ x, y } as SurveyPoint, canvas.getContext("2d")!, {
         bgW: canvas!.width,
@@ -431,27 +452,47 @@ export default function ClickableFloorplan(): ReactNode {
   };
 
   return (
-    <div className="bg-white p-6 rounded-lg shadow-md">
-      <h2 className="text-2xl font-semibold text-gray-800">
-        Interactive Floorplan
-      </h2>
-      <div className="p-2 rounded-md text-sm">
-        <p>Click on the floor plan to start a new measurement.</p>
-        <p>Click on existing points to see the measurement details.</p>
-
-        <div className="space-y-2 flex flex-col">
-          {settings.surveyPoints?.length > 0 && (
-            <div>Total Measurements: {settings.surveyPoints.length}</div>
-          )}
-        </div>
-      </div>
+    <div className="bg-white p-2 rounded-lg shadow-md">
       {alertMessage != "" && (
-        <Alert variant="destructive">
+        <Alert variant="destructive" className="mb-2">
           <AlertTitle>Error Summary</AlertTitle>
           <AlertDescription>{alertMessage}</AlertDescription>
         </Alert>
       )}
       <div className="relative" ref={containerRef}>
+        {/* Floating measurements counter - upper left */}
+        <div className="absolute top-2 left-2 z-10 bg-white/90 backdrop-blur-sm px-3 py-1.5 rounded-md shadow-md text-sm font-medium text-gray-700">
+          Measurements: {settings.surveyPoints?.length || 0}
+        </div>
+
+        {/* Floating info button - upper right */}
+        <button
+          onClick={() => setShowInfo(!showInfo)}
+          className="absolute top-2 right-2 z-10 bg-white/90 backdrop-blur-sm p-2 rounded-full shadow-md hover:bg-gray-100 transition-colors"
+          title="Instructions"
+        >
+          <Info className="h-5 w-5 text-gray-600" />
+        </button>
+
+        {/* Info popup */}
+        {showInfo && (
+          <div className="absolute top-12 right-2 z-20 bg-white rounded-lg shadow-lg p-4 max-w-xs border border-gray-200">
+            <div className="flex justify-between items-start mb-2">
+              <h3 className="font-semibold text-gray-800">Instructions</h3>
+              <button
+                onClick={() => setShowInfo(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="text-sm text-gray-600 space-y-1">
+              <p>Click on the floor plan to start a new measurement.</p>
+              <p>Click on existing points to see the measurement details.</p>
+            </div>
+          </div>
+        )}
+
         <canvas
           ref={canvasRef}
           width={settings.dimensions.width}

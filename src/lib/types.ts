@@ -1,8 +1,8 @@
 // Used for localization map
 export type LocalizerMap = Record<string, any>;
 export interface IperfTestProperty {
-  bitsPerSecond: number;
-  retransmits?: number;
+  bitsPerSecond: number | null; // null when test failed or no data
+  retransmits?: number | null;
   jitterMs: number | null;
   lostPackets: number | null;
   packetsReceived: number | null;
@@ -81,6 +81,9 @@ export interface HeatmapSettings {
   floorplanImageName: string; // name of the floorplan-filename
   floorplanImagePath: string; // path to the /media/floorplan-filename
   iperfServerAdrs: string;
+  iperfServerHistory: string[]; // previously used iperf3 server addresses
+  iperfTcpEnabled: boolean; // whether to run TCP speed tests
+  iperfUdpEnabled: boolean; // whether to run UDP speed tests
   testDuration: number;
   sudoerPassword: string; // kept in settings, removed before writing to file
   apMapping: ApMapping[];
@@ -105,6 +108,8 @@ export interface HeatmapSettings {
  */
 export interface PartialHeatmapSettings {
   iperfServerAdrs: string;
+  iperfTcpEnabled: boolean;
+  iperfUdpEnabled: boolean;
   testDuration: number;
   sudoerPassword: string;
   ignoredSSIDs: string[];
